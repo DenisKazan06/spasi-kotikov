@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Спаси котиков!</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            background-color: white;
+        }
+        #gameContainer {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+        }
+        .sound-control {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(255, 255, 255, 0.7);
+            padding: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 24px;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div class="sound-control" id="soundToggle">🔊</div>
+        <div id="loading">Загрузка игры...</div>
+    </div>
+
+    <script>
+        // Основной класс игры
+        class SaveKittensGame {
+            constructor() {
+                // Инициализация холста
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.setCanvasSize();
+
+                // Константы
+                this.WHITE = '#FFFFFF';
+                this.RED = '#C83232';
+                this.GREEN = '#32C832';
+                this.BLACK = '#000000';
+                this.FPS = 60;
+
+                // Игровые переменные
+                this.gameState = 'menu'; // 'menu', 'game', 'gameOver'
+                this.score = 0;
+                this.level = 1;
+                this.highscore = this.loadHighscore();
+                this.kittens = [];
+                this.crocs = [];
+                
+                // Загрузка ресурсов
+                this.loadResources();
+                
+                // Звуки
+                this.soundEnabled = true;
+                this.setupSounds();
+                document.getElementById('soundToggle').addEventListener('click', () => this.toggleSound());
+                
+                // Обработчики событий
+                window.addEventListener('resize', () => this.setCanvasSize());
+                this.canvas.addEventListener('click', (e) => this.handleClick(e));
+                this.canvas.addEventListener('touchstart', (e) => this.handleTouch(e));
+                
+                // Запуск игрового цикла
+                this.lastTime = 0;
+                requestAnimationFrame(this.gameLoop.bind(this));
+            }
+            
+            setCanvasSize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                this.WIDTH = this.canvas.width;
+                this.HEIGHT = this.canvas.height;
+            }
+            
+            loadResources() {
+                this.images = {};
+                this.imagesLoaded = 0;
+                this.totalImages = 4;
+                this.resourcesLoaded = false;
+                
+                const loadImage = (name, src) => {
+                    this.images[name] = new Image();
+                    this.images[name].src = src;
+                    this.images[name].onload = () => {
+                        this.imagesLoaded++;
+                        if (this.imagesLoaded === this.totalImages) {
+                            this.resourcesLoaded = true;
+                            document.getElementById('loading').style.display = 'none';
+                        }
+                    };
+                    this.images[name].onerror = () => {
+                        console.error(`Не удалось загрузить изображение: ${src}`);
+                        this.imagesLoaded++;
+                        if (this.imagesLoaded === this.totalImages) {
+                            this.resourcesLoaded = true;
+                            document.getElementById('loading').style.display = 'none';
+                        }
+                    };
+                };
+                
+                // Путь к изображениям (папка images в корне проекта)
+                loadImage('menuBg', 'images/menu_bg.png');
+                loadImage('kitten', 'images/kitten.png');
+                loadImage('croc', 'images/crocodile.png');
+                loadImage('gameOverBg', 'images/game_over_bg.png');
+            }
+            
+            setupSounds() {
+                this.sounds = {};
+                
+                try {
+                    this.backgroundMusic = new Audio('sounds/background_music.mp3');
+                    this.backgroundMusic.loop = true;
+                    this.backgroundMusic.volume = 0.5;
+                    
+                    this.sounds.click = new Audio('sounds/click.wav');
+                    this.sounds.click.volume = 0.7;
+                    
+                    this.sounds.eat = new Audio('sounds/eat.wav');
+                    this.sounds.eat.volume = 0.7;
+                    
+                    // Настраиваем автозапуск музыки после взаимодействия с пользователем
+                    const startAudio = () => {
+                        if (this.soundEnabled) {
+                            this.backgroundMusic.play().catch(e => console.log("Ошибка воспроизведения музыки:", e));
+                        }
+                        document.removeEventListener('click', startAudio);
+                        document.removeEventListener('touchstart', startAudio);
+                    };
+                    
+                    document.addEventListener('click', startAudio);
+                    document.addEventListener('touchstart', startAudio);
+                } catch(e) {
+                    console.error("Не удалось инициализировать звуки:", e);
+                }
+            }
+            
+            toggleSound() {
+                this.soundEnabled = !this.soundEnabled;
+                document.getElementById('soundToggle').textContent = this.soundEnabled ? '🔊' : '🔇';
+                
+                if (this.soundEnabled) {
+                    this.backgroundMusic.play().catch(e => console.log("Ошибка воспроизведения музыки:", e));
+                } else {
+                    this.backgroundMusic.pause();
+                }
+            }
+            
+            playSound(sound) {
+                if (this.soundEnabled && this.sounds[sound]) {
+                    // Клонируем звук для возможности одновременного воспроизведения
+                    this.sounds[sound].currentTime = 0;
+                    this.sounds[sound].play().catch(e => console.log("Ошибка воспроизведения звука:", e));
+                }
+            }
+            
+            loadHighscore() {
+                try {
+                    const highscoreData = localStorage.getItem('SaveKittensHighscore');
+                    return highscoreData ? JSON.parse(highscoreData).score : 0;
+                } catch (e) {
+                    console.error("Ошибка загрузки рекорда:", e);
+                    return 0;
+                }
+            }
+            
+            saveHighscore(score) {
+                if (score > this.highscore) {
+                    this.highscore = score;
+                    try {
+                        localStorage.setItem('SaveKittensHighscore', JSON.stringify({ score: this.highscore }));
+                    } catch (e) {
+                        console.error("Ошибка сохранения рекорда:", e);
+                    }
+                }
+            }
+            
+            createOutlinedText(text, fontSize, color, outlineColor, outlineSize = 2) {
+                this.ctx.font = `bold ${fontSize}px Arial`;
+                this.ctx.fillStyle = color;
+                this.ctx.strokeStyle = outlineColor;
+                this.ctx.lineWidth = outlineSize;
+                this.ctx.strokeText(text, 0, 0);
+                this.ctx.fillText(text, 0, 0);
+                
+                return {
+                    width: this.ctx.measureText(text).width,
+                    height: fontSize
+                };
+            }
+            
+            drawOutlinedText(text, x, y, fontSize, color, outlineColor, outlineSize = 2) {
+                this.ctx.font = `bold ${fontSize}px Arial`;
+                this.ctx.fillStyle = color;
+                this.ctx.strokeStyle = outlineColor;
+                this.ctx.lineWidth = outlineSize;
+                this.ctx.strokeText(text, x, y);
+                this.ctx.fillText(text, x, y);
+                
+                return {
+                    width: this.ctx.measureText(text).width,
+                    height: fontSize
+                };
+            }
+            
+            startNewGame() {
+                this.gameState = 'game';
+                this.score = 0;
+                this.level = 1;
+                this.kittens = [];
+                for (let i = 0; i < 5; i++) {
+                    this.kittens.push(new Kitten(this.WIDTH, this.HEIGHT));
+                }
+                this.crocs = [];
+                for (let i = 0; i < 3; i++) {
+                    this.crocs.push(new Crocodile(this.kittens, this.level, this.WIDTH, this.HEIGHT));
+                }
+            }
+            
+            drawMainMenu() {
+                // Рисуем фон
+                if (this.images.menuBg && this.resourcesLoaded) {
+                    this.ctx.drawImage(this.images.menuBg, 0, 0, this.WIDTH, this.HEIGHT);
+                } else {
+                    this.ctx.fillStyle = '#6496C8';
+                    this.ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
+                }
+                
+                // Рисуем заголовок
+                const titleTextSize = Math.floor(this.WIDTH * 0.07);
+                const titleSize = this.drawOutlinedText("Спаси котиков!", 
+                    this.WIDTH / 2 - this.ctx.measureText("Спаси котиков!").width / 2, 
+                    50 + titleTextSize / 2, titleTextSize, this.RED, this.BLACK);
+                
+                // Рисуем кнопку "Начать"
+                const startTextSize = Math.floor(this.WIDTH * 0.05);
+                this.ctx.font = `bold ${startTextSize}px Arial`;
+                const startText = "Начать";
+                const startTextWidth = this.ctx.measureText(startText).width;
+                
+                this.startButtonRect = {
+                    x: this.WIDTH / 2 - startTextWidth / 2,
+                    y: this.HEIGHT - 150,
+                    width: startTextWidth,
+                    height: startTextSize
+                };
+                
+                this.drawOutlinedText(startText, 
+                    this.startButtonRect.x, 
+                    this.startButtonRect.y + startTextSize / 2, 
+                    startTextSize, this.RED, this.BLACK);
+                
+                // Рисуем рекорд
+                const highscoreTextSize = Math.floor(this.WIDTH * 0.05);
+                const highscoreText = `Рекорд: ${this.highscore}`;
+                const highscoreTextWidth = this.ctx.measureText(highscoreText).width;
+                
+                this.drawOutlinedText(highscoreText, 
+                    this.WIDTH / 2 - highscoreTextWidth / 2, 
+                    this.HEIGHT - 50 + highscoreTextSize / 2, 
+                    highscoreTextSize, this.RED, this.BLACK);
+            }
+            
+            drawGameOver() {
+                // Рисуем фон
+                if (this.images.gameOverBg && this.resourcesLoaded) {
+                    this.ctx.drawImage(this.images.gameOverBg, 0, 0, this.WIDTH, this.HEIGHT);
+                } else {
+                    this.ctx.fillStyle = '#964B4B';
+                    this.ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
+                }
+                
+                // Полупрозрачная подложка
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                this.ctx.fillRect(50, this.HEIGHT / 2 - 150, this.WIDTH - 100, 300);
+                
+                // Рисуем текст
+                const gameOverTextSize = Math.floor(this.WIDTH * 0.06);
+                const smallTextSize = Math.floor(this.WIDTH * 0.04);
+                
+                let yPos = this.HEIGHT / 2 - 120;
+                
+                // "Ты проиграл!"
+                this.ctx.font = `bold ${gameOverTextSize}px Arial`;
+                const gameOverText = "Ты проиграл!";
+                const gameOverTextWidth = this.ctx.measureText(gameOverText).width;
+                
+                this.drawOutlinedText(gameOverText, 
+                    this.WIDTH / 2 - gameOverTextWidth / 2, 
+                    yPos + gameOverTextSize / 2, 
+                    gameOverTextSize, this.WHITE, this.BLACK);
+                yPos += 60;
+                
+                // "Ваш счёт"
+                this.ctx.font = `bold ${smallTextSize}px Arial`;
+                const scoreText = `Ваш счёт: ${this.score}`;
+                const scoreTextWidth = this.ctx.measureText(scoreText).width;
+                
+                this.drawOutlinedText(scoreText, 
+                    this.WIDTH / 2 - scoreTextWidth / 2, 
+                    yPos + smallTextSize / 2, 
+                    smallTextSize, this.WHITE, this.BLACK);
+                yPos += 50;
+                
+                // "Рекорд"
+                const highscoreText = `Рекорд: ${this.highscore}`;
+                const highscoreTextWidth = this.ctx.measureText(highscoreText).width;
+                
+                this.drawOutlinedText(highscoreText, 
+                    this.WIDTH / 2 - highscoreTextWidth / 2, 
+                    yPos + smallTextSize / 2, 
+                    smallTextSize, this.WHITE, this.BLACK);
+                yPos += 70;
+                
+                // "Попробовать снова"
+                const retryText = "Попробовать снова";
+                const retryTextWidth = this.ctx.measureText(retryText).width;
+                
+                this.retryButtonRect = {
+                    x: this.WIDTH / 2 - retryTextWidth / 2,
+                    y: yPos,
+                    width: retryTextWidth,
+                    height: smallTextSize
+                };
+                
+                this.drawOutlinedText(retryText, 
+                    this.retryButtonRect.x, 
+                    yPos + smallTextSize / 2, 
+                    smallTextSize, this.WHITE, this.BLACK);
+                yPos += 60;
+                
+                // "Выйти"
+                const exitText = "Выйти";
+                const exitTextWidth = this.ctx.measureText(exitText).width;
+                
+                this.exitButtonRect = {
+                    x: this.WIDTH / 2 - exitTextWidth / 2,
+                    y: yPos,
+                    width: exitTextWidth,
+                    height: smallTextSize
+                };
+                
+                this.drawOutlinedText(exitText, 
+                    this.exitButtonRect.x, 
+                    yPos + smallTextSize / 2, 
+                    smallTextSize, this.WHITE, this.BLACK);
+            }
+            
+            drawGame() {
+                // Очищаем холст
+                this.ctx.fillStyle = this.WHITE;
+                this.ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
+                
+                // Рисуем котиков
+                for (const kitten of this.kittens) {
+                    kitten.draw(this.ctx, this.images.kitten);
+                }
+                
+                // Рисуем крокодилов
+                for (const croc of this.crocs) {
+                    croc.draw(this.ctx, this.images.croc);
+                }
+                
+                // Рисуем интерфейс
+                this.drawUI();
+            }
+            
+            drawUI() {
+                this.ctx.font = 'bold 30px Arial';
+                this.ctx.fillStyle = this.RED;
+                
+                const scoreText = `Очки: ${this.score}`;
+                const levelText = `Уровень: ${this.level}`;
+                
+                this.ctx.fillText(scoreText, 10, 35);
+                this.ctx.fillText(levelText, 10, 75);
+            }
+            
+            handleClick(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                if (this.gameState === 'menu') {
+                    if (this.isPointInRect(x, y, this.startButtonRect)) {
+                        this.playSound('click');
+                        this.startNewGame();
+                    }
+                } else if (this.gameState === 'game') {
+                    let crocClicked = false;
+                    for (let i = this.crocs.length - 1; i >= 0; i--) {
+                        if (this.crocs[i].isClicked({x, y})) {
+                            this.playSound('click');
+                            this.crocs.splice(i, 1);
+                            this.score += 1;
+                            crocClicked = true;
+                            break;
+                        }
+                    }
+                } else if (this.gameState === 'gameOver') {
+                    if (this.isPointInRect(x, y, this.retryButtonRect)) {
+                        this.playSound('click');
+                        this.startNewGame();
+                    } else if (this.isPointInRect(x, y, this.exitButtonRect)) {
+                        this.playSound('click');
+                        this.gameState = 'menu';
+                    }
+                }
+            }
+            
+            handleTouch(e) {
+                e.preventDefault();
+                if (e.touches.length > 0) {
+                    const rect = this.canvas.getBoundingClientRect();
+                    const touch = e.touches[0];
+                    const x = touch.clientX - rect.left;
+                    const y = touch.clientY - rect.top;
+                    
+                    // Делегируем обработку нажатия методу handleClick
+                    this.handleClick({clientX: touch.clientX, clientY: touch.clientY});
+                }
+            }
+            
+            isPointInRect(x, y, rect) {
+                return x >= rect.x && x <= rect.x + rect.width &&
+                       y >= rect.y && y <= rect.y + rect.height;
+            }
+            
+            update(deltaTime) {
+                if (this.gameState === 'game') {
+                    // Обновляем котиков
+                    for (const kitten of this.kittens) {
+                        kitten.move(deltaTime, this.WIDTH, this.HEIGHT);
+                    }
+                    
+                    // Обновляем крокодилов
+                    for (const croc of this.crocs) {
+                        croc.move(this.kittens, deltaTime);
+                    }
+                    
+                    // Проверяем столкновения
+                    for (let i = this.crocs.length - 1; i >= 0; i--) {
+                        for (let j = this.kittens.length - 1; j >= 0; j--) {
+                            if (Math.abs(this.crocs[i].x - this.kittens[j].x) < 30 && 
+                                Math.abs(this.crocs[i].y - this.kittens[j].y) < 30) {
+                                this.kittens.splice(j, 1);
+                                this.playSound('eat');
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Проверяем условия перехода на следующий уровень
+                    if (this.crocs.length === 0) {
+                        this.level += 1;
+                        for (let i = 0; i < 2 + this.level; i++) {
+                            this.crocs.push(new Crocodile(this.kittens, this.level, this.WIDTH, this.HEIGHT));
+                        }
+                    }
+                    
+                    // Проверяем условие проигрыша
+                    if (this.kittens.length === 0) {
+                        this.saveHighscore(this.score);
+                        this.gameState = 'gameOver';
+                    }
+                }
+            }
+            
+            gameLoop(timestamp) {
+                // Расчет времени между кадрами
+                const deltaTime = timestamp - this.lastTime;
+                this.lastTime = timestamp;
+                
+                // Обновление игровой логики
+                this.update(deltaTime / 1000);
+                
+                // Отрисовка
+                if (this.gameState === 'menu') {
+                    this.drawMainMenu();
+                } else if (this.gameState === 'game') {
+                    this.drawGame();
+                } else if (this.gameState === 'gameOver') {
+                    this.drawGameOver();
+                }
+                
+                // Продолжение игрового цикла
+                requestAnimationFrame(this.gameLoop.bind(this));
+            }
+        }
+        
+        // Класс Котенок
+        class Kitten {
+            constructor(width, height) {
+                this.x = Math.random() * (width - 100) + 50;
+                this.y = Math.random() * (height - 100) + 50;
+                this.speed = Math.random() * 2 + 1;
+                this.dx = (Math.random() > 0.5 ? 1 : -1) * this.speed;
+                this.dy = (Math.random() > 0.5 ? 1 : -1) * this.speed;
+                this.size = 50;
+            }
+            
+            move(deltaTime, width, height) {
+                // Случайное изменение направления
+                if (Math.random() < 0.02) {
+                    this.dx = (Math.random() > 0.5 ? 1 : -1) * this.speed;
+                    this.dy = (Math.random() > 0.5 ? 1 : -1) * this.speed;
+                }
+                
+                // Движение
+                this.x += this.dx * deltaTime * 60;
+                this.y += this.dy * deltaTime * 60;
+                
+                // Не выходим за границы экрана
+                this.x = Math.max(0, Math.min(width - this.size, this.x));
+                this.y = Math.max(0, Math.min(height - this.size, this.y));
+            }
+            
+            draw(ctx, image) {
+                if (image && image.complete) {
+                    ctx.drawImage(image, this.x, this.y, this.size, this.size);
+                } else {
+                    // Заглушка если изображение не загружено
+                    ctx.fillStyle = '#FFC896';
+                    ctx.fillRect(this.x, this.y, this.size, this.size);
+                }
+            }
+        }
+        
+        // Класс Крокодил
+        class Crocodile {
+            constructor(kittens, speedMultiplier, width, height) {
+                // Размещаем крокодила подальше от котят
+                let attempts = 0;
+                let validPosition = false;
+                
+                while (attempts < 100 && !validPosition) {
+                    this.x = Math.random() * (width - 100) + 50;
+                    this.y = Math.random() * (height - 100) + 50;
+                    
+                    validPosition = true;
+                    for (const kitten of kittens) {
+                        if (Math.abs(this.x - kitten.x) < 100 && Math.abs(this.y - kitten.y) < 100) {
+                            validPosition = false;
+                            break;
+                        }
+                    }
+                    
+                    attempts++;
+                }
+                
+                this.speed = (Math.random() + 1) * speedMultiplier;
+                this.target = null;
+                this.smoothDx = 0;
+                this.smoothDy = 0;
+                this.width = 80;
+                this.height = 50;
+            }
+            
+            move(kittens, deltaTime) {
+                if (kittens.length > 0) {
+                    // Выбираем новую цель или если текущая исчезла
+                    if (!this.target || !kittens.includes(this.target) || Math.random() < 0.01) {
+                        this.target = kittens[Math.floor(Math.random() * kittens.length)];
+                    }
+                    
+                    if (this.target) {
+                        const dx = this.target.x - this.x;
+                        const dy = this.target.y - this.y;
+                        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.1);
+                        
+                        const targetDx = this.speed * dx / dist;
+                        const targetDy = this.speed * dy / dist;
+                        
+                        // Плавное движение
+                        this.smoothDx = this.smoothDx * 0.9 + targetDx * 0.1;
+                        this.smoothDy = this.smoothDy * 0.9 + targetDy * 0.1;
+                        
+                        this.x += this.smoothDx * deltaTime * 60;
+                        this.y += this.smoothDy * deltaTime * 60;
+                    }
+                }
+            }
+            
+            draw(ctx, image) {
+                if (image && image.complete) {
+                    ctx.drawImage(image, this.x, this.y, this.width, this.height);
+                } else {
+                    // Заглушка если изображение не загружено
+                    ctx.fillStyle = '#329632';
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                }
+            }
+            
+            isClicked(pos) {
+                return pos.x >= this.x && pos.x <= this.x + this.width &&
+                       pos.y >= this.y && pos.y <= this.height;
+            }
+        }
+        
+        // Запуск игры
+        window.onload = () => {
+            new SaveKittensGame();
+        };
+    </script>
+</body>
+</html>
